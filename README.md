@@ -1,6 +1,6 @@
 # pdf-extract-api
 
-Convert any image or PDF to Markdown text or JSON structured document with super-high accuracy, including tabular data, numbers or math formulas.
+Convert any image or PDF to Markdown *text* or JSON structured document with super-high accuracy, including tabular data, numbers or math formulas.
 
 The API is built with FastAPI and uses Celery for asynchronous task processing. Redis is used for caching OCR results.
 
@@ -126,14 +126,65 @@ python client/cli.py ocr --file examples/example-mri.pdf --ocr_cache
 
 ### Upload a File for OCR (processing by LLM)
 
+**Important note:** To use LLM you must first run the **llm_pull** to get the specific model required by your requests.
+
+For example you must run:
+
+```bash
+python client/cli.py llm_pull --model llama3.1
+```
+
+and only after to run this specific prompt query:
+
 ```bash
 python client/cli.py ocr --file examples/example-mri.pdf --ocr_cache --prompt_file=examples/example-mri-remove-pii.txt
+```
+
+The `ocr` command can store the results using the `storage_profiles`:
+  - **storage_profile**: Used to save the result - the `default` profile (`/storage_profiles/default.yaml`) is used by default; if empty file is not saved
+  - **storage_filename**: Outputting filename - relative path of the `root_path` set in the storage profile - by default a relative path to `/storage` folder; can use placeholders for dynamic formatting: `{file_name}`, `{file_extension}`, `{Y}`, `{mm}`, `{dd}` - for date formatting, `{HH}`, `{MM}`, `{SS}` - for time formatting
+
+
+### Upload a File for OCR (processing by LLM), store result on disk
+
+```bash
+python client/cli.py ocr --file examples/example-mri.pdf --ocr_cache --prompt_file=examples/example-mri-remove-pii.txt  --storage_filename "invoices/{Y}/{file_name}-{Y}-{mm}-{dd}.md"
 ```
 
 ### Get OCR Result by Task ID
 
 ```bash
-python client/cli.py result -task_id {your_task_id_from_upload_step}
+python client/cli.py result --task_id {your_task_id_from_upload_step}
+```
+
+### List file results archived by `storage_profile`
+
+```bash
+python client/cli.py list_files 
+```
+
+to use specific (in this case `google drive`) storage profile run:
+
+```bash
+python client/cli.py list_files  --storage_profile gdrive
+```
+
+### Load file result archived by `storage_profile`
+
+```bash
+python client/cli.py load_file --file_name "invoices/2024/example-invoice-2024-10-31-16-33.md"
+```
+
+### Delete file result archived by `storage_profile`
+
+```bash
+python client/cli.py delete_file --file_name "invoices/2024/example-invoice-2024-10-31-16-33.md" --storage_profile gdrive
+```
+
+or for default profile (local file system):
+
+```bash
+python client/cli.py delete_file --file_name "invoices/2024/example-invoice-2024-10-31-16-33.md" 
 ```
 
 ### Clear OCR Cache
@@ -159,6 +210,8 @@ python llm_generate --prompt "Your prompt here"
   - **ocr_cache**: Whether to cache the OCR result (true or false).
   - **prompt**: When provided, will be used for Ollama processing the OCR result
   - **model**: When provided along with the prompt - this model will be used for LLM processing
+  - **storage_profile**: Used to save the result - the `default` profile (`/storage_profiles/default.yaml`) is used by default; if empty file is not saved
+  - **storage_filename**: Outputting filename - relative path of the `root_path` set in the storage profile - by default a relative path to `/storage` folder; can use placeholders for dynamic formatting: `{file_name}`, `{file_extension}`, `{Y}`, `{mm}`, `{dd}` - for date formatting, `{HH}`, `{MM}`, `{SS}` - for time formatting
 
 Example:
 
@@ -189,7 +242,7 @@ curl -X POST "http://localhost:8000/ocr/clear_cache"
 
 
 ### Ollama Pull Endpoint
-- **URL**: /llm_pull
+- **URL**: /llm/pull
 - **Method**: POST
 - **Parameters**:
   - **model**: Pull the model you are to use first
@@ -201,7 +254,7 @@ curl -X POST "http://localhost:8000/llama_pull" -H "Content-Type: application/js
 ```
 
 ### Ollama Endpoint
-- **URL**: /llm_generate
+- **URL**: /llm/generate
 - **Method**: POST
 - **Parameters**:
   - **prompt**: Prompt for the Ollama model.
@@ -212,6 +265,59 @@ Example:
 ```bash
 curl -X POST "http://localhost:8000/llama_generate" -H "Content-Type: application/json" -d '{"prompt": "Your prompt here", "model":"llama3.1"}'
 ```
+
+### List storage files:
+ 
+- **URL:** /storage/list
+- **Method:** GET
+- **Parameters**:
+  - **storage_profile**: Name of the storage profile to use for listing files (default: `default`).
+
+### Download storage file:
+ 
+- **URL:** /storage/load
+- **Method:** GET
+- **Parameters**:
+  - **file_name**: File name to load from the storage
+  - **storage_profile**: Name of the storage profile to use for listing files (default: `default`).
+
+### Delete storage file:
+ 
+- **URL:** /storage/delete
+- **Method:** DELETE
+- **Parameters**:
+  - **file_name**: File name to load from the storage
+  - **storage_profile**: Name of the storage profile to use for listing files (default: `default`).
+
+
+## Storage profiles
+
+The tool can automatically save the results using different storage strategies and storage profiles. Storage profiles are set in the `/storage_profiles` by a yaml configuration files.
+
+Example:
+
+```yaml
+strategy: local_filesystem
+settings:
+  root_path: /storage # The root path where the files will be stored - mount a proper folder in the docker file to match it
+  subfolder_names_format: "" # eg: by_months/{Y}-{mm}/
+  create_subfolders: true
+```
+
+for Google drive:
+
+```yaml
+strategy: google_drive
+settings:
+## how to enable GDrive API: https://developers.google.com/drive/api/quickstart/python?hl=pl
+
+  service_account_file: /storage/client_secret_269403342997-290pbjjlb06nbof78sjaj7qrqeakp3t0.apps.googleusercontent.com.json
+  folder_id:
+```
+
+Where the `service_account_file` is a `json` file with authorization credentials. Please read on how to enable Google Drive API and prepare this authorization file [here](https://developers.google.com/drive/api/quickstart/python?hl=pl).
+
+Note: Service Account is different account that the one you're using for Google workspace (files will not be visible in the UI)
 
 ## License
 This project is licensed under the GNU General Public License. See the [LICENSE](LICENSE.md) file for details.

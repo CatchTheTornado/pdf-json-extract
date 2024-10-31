@@ -3,11 +3,11 @@ import requests
 import time
 import os
 
-def upload_file(file_path, ocr_cache, prompt, prompt_file = None, model = 'llama3.1', strategy = 'marker'):
+def upload_file(file_path, ocr_cache, prompt, prompt_file=None, model='llama3.1', strategy='marker', storage_profile='default', storage_filename=None):
     ocr_url = os.getenv('OCR_URL', 'http://localhost:8000/ocr')
     files = {'file': open(file_path, 'rb')}
-    data = {'ocr_cache': ocr_cache, 'model': model, 'strategy': strategy }
-
+    data = {'ocr_cache': ocr_cache, 'model': model, 'strategy': strategy, 'storage_profile': storage_profile, 'storage_filename': storage_filename}
+    print(data)
     try:
         if prompt_file:
             prompt = open(prompt_file, 'r').read()
@@ -67,7 +67,7 @@ def clear_cache():
         print(f"Failed to clear OCR cache: {response.text}")
 
 def llm_pull(model = 'llama3.1'):
-    ollama_pull_url = os.getenv('LLM_PULL_API_URL', 'http://localhost:8000/llm_pull')
+    ollama_pull_url = os.getenv('LLM_PULL_API_URL', 'http://localhost:8000/llm/pull')
     response = requests.post(ollama_pull_url, json={"model": model})
     if response.status_code == 200:
         print("Model pulled successfully.")
@@ -75,12 +75,39 @@ def llm_pull(model = 'llama3.1'):
         print(f"Failed to pull the model: {response.text}")
 
 def llm_generate(prompt, model = 'llama3.1'):
-    ollama_url = os.getenv('LLM_GENERATE_API_URL', 'http://localhost:8000/llm_generate')
+    ollama_url = os.getenv('LLM_GENERATE_API_URL', 'http://localhost:8000/llm/generate')
     response = requests.post(ollama_url, json={"model": model, "prompt": prompt})
     if response.status_code == 200:
         print(response.json().get('generated_text'))
     else:
         print(f"Failed to generate text: {response.text}")
+
+def list_files(storage_profile):
+    list_files_url = os.getenv('LIST_FILES_URL', 'http://localhost:8000/storage/list')
+    response = requests.get(list_files_url, params={'storage_profile': storage_profile})
+    if response.status_code == 200:
+        files = response.json().get('files', [])
+        for file in files:
+            print(file)
+    else:
+        print(f"Failed to list files: {response.text}")        
+
+def load_file(file_name, storage_profile):
+    load_file_url = os.getenv('LOAD_FILE_URL', 'http://localhost:8000/storage/load')
+    response = requests.get(load_file_url, params={'file_name': file_name, 'storage_profile': storage_profile})
+    if response.status_code == 200:
+        content = response.json().get('content', '')
+        print(content)
+    else:
+        print(f"Failed to load file: {response.text}")
+
+def delete_file(file_name, storage_profile):
+    delete_file_url = os.getenv('DELETE_FILE_URL', 'http://localhost:8000/storage/delete')
+    response = requests.delete(delete_file_url, params={'file_name': file_name, 'storage_profile': storage_profile})
+    if response.status_code == 200:
+        print(f"File {file_name} deleted successfully.")
+    else:
+        print(f"Failed to delete file: {response.text}")
 
 def main():
     parser = argparse.ArgumentParser(description="CLI for OCR and Ollama operations.")
@@ -95,13 +122,14 @@ def main():
     ocr_parser.add_argument('--model', type=str, default='llama3.1', help='Model to use for the Ollama endpoint')
     ocr_parser.add_argument('--strategy', type=str, default='marker', help='OCR strategy to use for the file')
     ocr_parser.add_argument('--print_progress', default=True, action='store_true', help='Print the progress of the OCR task')
+    ocr_parser.add_argument('--storage_profile', type=str, default='default', help='Storage profile to use for the file')
+    ocr_parser.add_argument('--storage_filename', type=str, default=None, help='Storage filename to use for the file')
     #ocr_parser.add_argument('--async_mode', action='store_true', help='Enable async mode for the OCR task')
 
     # Sub-command for getting the result
-    ocr_parser = subparsers.add_parser('result', help='Get the OCR result by specified task id.')
-    ocr_parser.add_argument('--task_id', type=str, help='Task Id returned by the upload command')
-    ocr_parser.add_argument('--print_progress', default=True, action='store_true', help='Print the progress of the OCR task')
-
+    result_parser = subparsers.add_parser('result', help='Get the OCR result by specified task id.')
+    result_parser.add_argument('--task_id', type=str, help='Task Id returned by the upload command')
+    result_parser.add_argument('--print_progress', default=True, action='store_true', help='Print the progress of the OCR task')
 
     # Sub-command for clearing the cache
     clear_cache_parser = subparsers.add_parser('clear_cache', help='Clear the OCR result cache')
@@ -114,12 +142,25 @@ def main():
     ollama_pull_parser = subparsers.add_parser('llm_pull', help='Pull the latest Llama model from the Ollama API')   
     ollama_pull_parser.add_argument('--model', type=str, default='llama3.1', help='Model to pull from the Ollama API')
 
+    # Sub-command for listing files
+    list_files_parser = subparsers.add_parser('list_files', help='List files using the selected storage profile')
+    list_files_parser.add_argument('--storage_profile', type=str, default='default', help='Storage profile to use')
+
+    # Sub-command for loading a file
+    load_file_parser = subparsers.add_parser('load_file', help='Load a file using the selected storage profile')
+    load_file_parser.add_argument('--file_name', type=str, required=True, help='Name of the file to load')
+    load_file_parser.add_argument('--storage_profile', type=str, default='default', help='Storage profile to use')
+
+    # Sub-command for deleting a file
+    delete_file_parser = subparsers.add_parser('delete_file', help='Delete a file using the selected storage profile')
+    delete_file_parser.add_argument('--file_name', type=str, required=True, help='Name of the file to delete')
+    delete_file_parser.add_argument('--storage_profile', type=str, default='default', help='Storage profile to use')
 
     args = parser.parse_args()
 
     if args.command == 'ocr':
         print(args)
-        result = upload_file(args.file, args.ocr_cache, args.prompt, args.prompt_file, args.model)
+        result = upload_file(args.file, args.ocr_cache, args.prompt, args.prompt_file, args.model, args.strategy, args.storage_profile, args.storage_filename)
         if result is None:
             print("Error uploading file.")
             return
@@ -140,6 +181,12 @@ def main():
         llm_generate(args.prompt, args.model)
     elif args.command == 'llm_pull':
         llm_pull(args.model)
+    elif args.command == 'list_files':
+        list_files(args.storage_profile)     
+    elif args.command == 'load_file':
+        load_file(args.file_name, args.storage_profile)
+    elif args.command == 'delete_file':
+        delete_file(args.file_name, args.storage_profile)           
     else:
         parser.print_help()
 

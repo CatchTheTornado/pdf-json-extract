@@ -3,6 +3,7 @@ from urllib import parse
 import requests
 from fastapi import FastAPI, Form, Request, UploadFile, File, HTTPException
 from celery.result import AsyncResult
+from storage_manager import StorageManager
 from celery_config import celery
 from tasks import ocr_task, OCR_STRATEGIES
 from hashlib import md5
@@ -21,10 +22,12 @@ redis_client = redis.StrictRedis.from_url(redis_url)
 @app.post("/ocr")
 async def ocr_endpoint(
     strategy: str = Form(...),
-    prompt: str = Form(...),
+    prompt: str = Form(None),
     model: str = Form(...),
     file: UploadFile = File(...),
-    ocr_cache: bool = Form(...)
+    ocr_cache: bool = Form(...),
+    storage_profile: str = Form('default'),
+    storage_filename: str = Form(None)
 ):    
     """
     Endpoint to extract text from an uploaded PDF file using different OCR strategies.
@@ -41,10 +44,10 @@ async def ocr_endpoint(
     if strategy not in OCR_STRATEGIES:
         raise HTTPException(status_code=400, detail=f"Unknown strategy '{strategy}'. Available: marker, tesseract")
 
-    print(f"Processing PDF {file.filename} with strategy: {strategy}, ocr_cache: {ocr_cache}, model: {model}")
+    print(f"Processing PDF {file.filename} with strategy: {strategy}, ocr_cache: {ocr_cache}, model: {model}, storage_profile: {storage_profile}, storage_filename: {storage_filename}")
 
     # Asynchronous processing using Celery
-    task = ocr_task.apply_async(args=[pdf_bytes, strategy, pdf_hash, ocr_cache, prompt, model])
+    task = ocr_task.apply_async(args=[pdf_bytes, strategy, file.filename, pdf_hash, ocr_cache, prompt, model, storage_profile, storage_filename])
     return {"task_id": task.id}
 
 @app.get("/ocr/result/{task_id}")
@@ -81,7 +84,34 @@ class OllamaGenerateRequest(BaseModel):
 class OllamaPullRequest(BaseModel):
     model: str
 
-@app.post("/llm_pull")
+@app.get("/storage/list")
+async def list_files(storage_profile: str = 'default'):
+    """
+    Endpoint to list files using the selected storage profile.
+    """
+    storage_manager = StorageManager(storage_profile)
+    files = storage_manager.list()
+    return {"files": files}
+
+@app.get("/storage/load")
+async def load_file(file_name: str, storage_profile: str = 'default'):
+    """
+    Endpoint to load a file using the selected storage profile.
+    """
+    storage_manager = StorageManager(storage_profile)
+    content = storage_manager.load(file_name)
+    return {"content": content}
+
+@app.delete("/storage/delete")
+async def delete_file(file_name: str, storage_profile: str = 'default'):
+    """
+    Endpoint to delete a file using the selected storage profile.
+    """
+    storage_manager = StorageManager(storage_profile)
+    storage_manager.delete(file_name)
+    return {"status": f"File {file_name} deleted successfully"}
+
+@app.post("/llm/pull")
 async def pull_llama(request: OllamaPullRequest):
     """
     Endpoint to pull the latest Llama model from the Ollama API.
@@ -95,7 +125,7 @@ async def pull_llama(request: OllamaPullRequest):
 
     return {"status": response.get("status", "Model pulled successfully")}
 
-@app.post("/llm_generate")
+@app.post("/llm/generate")
 async def generate_llama(request: OllamaGenerateRequest):
     """
     Endpoint to generate text using Llama 3.1 model (and other models) via the Ollama API.

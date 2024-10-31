@@ -1,0 +1,5 @@
+strategy: google_drive
+settings:
+## how to enable GDrive API: https://developers.google.com/drive/api/quickstart/python?hl=pl
+  service_account_file: /storage/gdrive_service_account.json
+  folder_id: 

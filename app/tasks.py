@@ -5,6 +5,7 @@ from ocr_strategies.tesseract import TesseractOCRStrategy
 import redis
 import os
 import ollama
+from storage_manager import StorageManager
 
 OCR_STRATEGIES = {
     'marker': MarkerOCRStrategy(),
@@ -16,14 +17,13 @@ redis_url = os.getenv('REDIS_CACHE_URL', 'redis://redis:6379/1')
 redis_client = redis.StrictRedis.from_url(redis_url)
 
 @celery.task(bind=True)
-def ocr_task(self, pdf_bytes, strategy_name, pdf_hash, ocr_cache, prompt, model):
+def ocr_task(self, pdf_bytes, strategy_name, pdf_filename, pdf_hash, ocr_cache, prompt, model, storage_profile, storage_filename=None):
     """
     Celery task to perform OCR processing on a PDF file.
     """
+    start_time = time.time()
     if strategy_name not in OCR_STRATEGIES:
         raise ValueError(f"Unknown strategy '{strategy_name}'. Available: marker, tesseract")
-    
-    start_time = time.time()
 
     ocr_strategy = OCR_STRATEGIES[strategy_name]
     self.update_state(state='PROGRESS', status="File uploaded successfully", meta={'progress': 10})  # Example progress update
@@ -54,12 +54,19 @@ def ocr_task(self, pdf_bytes, strategy_name, pdf_hash, ocr_cache, prompt, model)
         self.update_state(state='PROGRESS', meta={'progress': 75, 'status': 'Processing LLM', 'start_time': start_time, 'elapsed_time': time.time() - start_time})  # Example progress update
         llm_resp = ollama.generate(model, prompt + extracted_text, stream=True)
         num_chunk = 1
+        extracted_text = '' # will be filled with chunks from llm
         for chunk in llm_resp:
             self.update_state(state='PROGRESS', meta={'progress': num_chunk , 'status': 'LLM Processing chunk no: ' + str(num_chunk), 'start_time': start_time, 'elapsed_time': time.time() - start_time})  # Example progress update
             num_chunk += 1
             extracted_text += chunk['response']
 
-    self.update_state(state='DONE', meta={'progress': 100 , 'status': 'Processing done!', 'start_time': start_time, 'elapsed_time': time.time() - start_time})  # Example progress update
+    if storage_profile:
+        if not storage_filename:
+            storage_filename = pdf_filename.replace('.pdf', '.md')
 
+        storage_manager = StorageManager(storage_profile)
+        storage_manager.save(pdf_filename, storage_filename, extracted_text)
+
+    self.update_state(state='DONE', meta={'progress': 100, 'status': 'Processing done!', 'start_time': start_time, 'elapsed_time': time.time() - start_time})
 
     return extracted_text

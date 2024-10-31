@@ -1,0 +1,5 @@
+strategy: local_filesystem
+settings:
+  root_path: /storage # The root path where the files will be stored - mount a proper folder in the docker file to match it
+  subfolder_names_format: "" # eg: by_months/{Y}-{mm}/
+  create_subfolders: true
